@@ -1,3 +1,94 @@
 {
-  "devices": []
+  "devices": [
+    {
+      "sim_index": 0,
+      "factory_device_id": "unoq-sim-000",
+      "device_id": "cont-000002",
+      "container_id": "bin-sim-000",
+      "device_token": "SM-C53L90J94_mOan0q2vn9NbaRKO2O5sM3V2LyQHoo",
+      "config": {
+        "telemetry_interval_sec": 60,
+        "heartbeat_interval_sec": 60,
+        "camera_inference_interval_ms": 2000,
+        "upload_event_images": true,
+        "thresholds": {
+          "near_full_pct": 70.0,
+          "full_pct": 85.0,
+          "critical_pct": 95.0,
+          "garbage_confidence": 0.65,
+          "garbage_frames_required": 3,
+          "garbage_window_frames": 5,
+          "clear_frames_required": 5
+        },
+        "calibration": {
+          "empty_distance_cm": 130.0,
+          "full_distance_cm": 20.0,
+          "empty_weight_kg": 40.0,
+          "max_payload_kg": 400.0
+        },
+        "camera": null
+      },
+      "config_revision": 1
+    },
+    {
+      "sim_index": 1,
+      "factory_device_id": "unoq-sim-001",
+      "device_id": "cont-000003",
+      "container_id": "bin-sim-001",
+      "device_token": "U3wgjooqOmR3KBQYt8Fss7ToElsShKSWzGdddGB5GDg",
+      "config": {
+        "telemetry_interval_sec": 60,
+        "heartbeat_interval_sec": 60,
+        "camera_inference_interval_ms": 2000,
+        "upload_event_images": true,
+        "thresholds": {
+          "near_full_pct": 70.0,
+          "full_pct": 85.0,
+          "critical_pct": 95.0,
+          "garbage_confidence": 0.65,
+          "garbage_frames_required": 3,
+          "garbage_window_frames": 5,
+          "clear_frames_required": 5
+        },
+        "calibration": {
+          "empty_distance_cm": 130.0,
+          "full_distance_cm": 20.0,
+          "empty_weight_kg": 40.0,
+          "max_payload_kg": 400.0
+        },
+        "camera": null
+      },
+      "config_revision": 1
+    },
+    {
+      "sim_index": 2,
+      "factory_device_id": "unoq-sim-002",
+      "device_id": "cont-000004",
+      "container_id": "bin-sim-002",
+      "device_token": "8emNoWrzEadaDgqawH7o5Wb9laM6mtClqNdpjRHFh2k",
+      "config": {
+        "telemetry_interval_sec": 60,
+        "heartbeat_interval_sec": 60,
+        "camera_inference_interval_ms": 2000,
+        "upload_event_images": true,
+        "thresholds": {
+          "near_full_pct": 70.0,
+          "full_pct": 85.0,
+          "critical_pct": 95.0,
+          "garbage_confidence": 0.65,
+          "garbage_frames_required": 3,
+          "garbage_window_frames": 5,
+          "clear_frames_required": 5
+        },
+        "calibration": {
+          "empty_distance_cm": 130.0,
+          "full_distance_cm": 20.0,
+          "empty_weight_kg": 40.0,
+          "max_payload_kg": 400.0
+        },
+        "camera": null
+      },
+      "config_revision": 1
+    }
+  ]
 }

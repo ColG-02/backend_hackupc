@@ -1,9 +1,11 @@
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from ..core.config import settings
 from ..core.database import get_db
 from ..core.security import get_current_user
 from ..models.media import MediaOut
@@ -52,4 +54,15 @@ async def get_media_file(media_id: str, db: DBDep, _user: UserDep):
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": "MEDIA_NOT_FOUND", "message": "File not found on disk."}},
         )
-    return FileResponse(path, media_type="image/jpeg")
+    # Guard against path traversal: ensure the resolved path stays inside UPLOAD_DIR
+    allowed_dir = os.path.realpath(settings.UPLOAD_DIR)
+    real_path = os.path.realpath(path)
+    if not real_path.startswith(allowed_dir + os.sep) and real_path != allowed_dir:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not os.path.isfile(real_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "MEDIA_NOT_FOUND", "message": "File not found on disk."}},
+        )
+    content_type = doc.get("content_type", "image/jpeg")
+    return FileResponse(real_path, media_type=content_type)

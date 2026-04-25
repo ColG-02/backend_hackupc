@@ -95,10 +95,10 @@ async def process_telemetry_batch(
         },
     )
 
-    # Update device last_seen_at
+    # Update device last_seen_at; reflect health status reported by the device
     await db.devices.update_one(
         {"_id": payload.device_id},
-        {"$set": {"last_seen_at": now, "status": "ONLINE", "updated_at": now}},
+        {"$set": {"last_seen_at": now, "status": latest.health.device_status.value, "updated_at": now}},
     )
 
     # Run alert rules against the latest reading

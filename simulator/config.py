@@ -1,5 +1,11 @@
 import argparse
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the project root (one level up from simulator/)
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8080")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@smart-waste.local")

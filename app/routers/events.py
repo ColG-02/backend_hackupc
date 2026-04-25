@@ -37,7 +37,7 @@ def _doc_to_out(doc: dict) -> EventOut:
         summary=doc.get("summary", ""),
         state=doc.get("state"),
         evidence=doc.get("evidence"),
-        media_ids=doc.get("evidence", {}).get("media_ids", []),
+        media_ids=(doc.get("evidence") or {}).get("media_ids", []),
         created_at=doc.get("created_at"),
         updated_at=doc.get("updated_at"),
     )

@@ -272,14 +272,7 @@ async def heartbeat(body: HeartbeatRequest, db: DBDep, device: DeviceDep):
 # ── Config poll ───────────────────────────────────────────────────────────────
 
 @router.get("/config", response_model=ConfigResponse)
-async def get_config(device_id: str, known_revision: int, db: DBDep):
-    device = await db.devices.find_one({"_id": device_id})
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": "DEVICE_NOT_FOUND", "message": "Device not found."}},
-        )
-
+async def get_config(known_revision: int, db: DBDep, device: DeviceDep):
     container_id = device.get("container_id")
     container = await db.containers.find_one({"_id": container_id}) if container_id else None
     config_revision = container.get("config_revision", 1) if container else 1

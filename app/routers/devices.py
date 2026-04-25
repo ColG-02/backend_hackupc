@@ -85,6 +85,13 @@ async def assign_device(
             },
         )
     now = datetime.utcnow()
+    # Clear device_id from whatever container currently owns this device
+    old_container_id = device.get("container_id")
+    if old_container_id and old_container_id != body.container_id:
+        await db.containers.update_one(
+            {"_id": old_container_id},
+            {"$set": {"device_id": None, "updated_at": now}},
+        )
     await db.devices.update_one(
         {"_id": device_id},
         {"$set": {"container_id": body.container_id, "updated_at": now}},

@@ -9,7 +9,7 @@ from ..models.device import DeviceEventRequest
 
 
 def _new_event_id() -> str:
-    return "evt-" + uuid4().hex[:6]
+    return "evt-" + uuid4().hex[:12]
 
 
 async def create_system_event(
@@ -27,6 +27,9 @@ async def create_system_event(
     await db.events.insert_one(
         {
             "_id": event_id,
+            # Use event_id as message_id so the (device_id, message_id) unique
+            # sparse index never treats two system events as duplicates.
+            "message_id": event_id,
             "container_id": container_id,
             "device_id": device_id,
             "type": event_type.value,

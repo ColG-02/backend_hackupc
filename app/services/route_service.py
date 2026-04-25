@@ -1,11 +1,13 @@
 """
 Route planning service.
 
-Candidate selection and priority scoring are fully implemented per spec §13.
-Actual route optimisation (OR-Tools VRP) is deferred — stops are assigned to
-vehicles via a simple round-robin sort by priority score.
+Candidate selection and priority scoring follow spec §13.
+Stop ordering uses a nearest-neighbor heuristic (greedy TSP approximation)
+with haversine distances — no external libraries required.
+True VRP (OR-Tools) can replace _nn_order() later without touching the rest.
 """
 
+import math
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -16,6 +18,9 @@ from ..models.route import CreateRoutePlanRequest
 from .event_service import create_system_event
 from ..models.common import EventSeverity
 
+_AVG_SPEED_KMH = 30.0   # average urban truck speed
+_SERVICE_MIN = 8         # minutes spent at each stop
+
 
 def _new_plan_id(plan_date: str) -> str:
     return f"rp-{plan_date}-" + uuid4().hex[:6]
@@ -23,6 +28,57 @@ def _new_plan_id(plan_date: str) -> str:
 
 def _new_stop_id() -> str:
     return "stop-" + uuid4().hex[:6]
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km between two (lat, lng) points."""
+    r = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lng2 - lng1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _container_coords(container: dict) -> tuple[float, float] | None:
+    """Return (lat, lng) from a container document, or None if absent."""
+    loc = container.get("location")
+    if not loc:
+        return None
+    coords = loc.get("coordinates")  # GeoJSON: [lng, lat]
+    if not coords or len(coords) < 2:
+        return None
+    return coords[1], coords[0]  # (lat, lng)
+
+
+def _nn_order(
+    depot_lat: float,
+    depot_lng: float,
+    items: list[tuple[dict, set, float]],  # (container, open_types, score)
+) -> list[tuple[dict, set, float]]:
+    """
+    Nearest-neighbor TSP heuristic starting from depot.
+    Containers without location data are appended at the end in priority order.
+    """
+    with_coords = [(c, ot, sc) for c, ot, sc in items if _container_coords(c)]
+    without_coords = [(c, ot, sc) for c, ot, sc in items if not _container_coords(c)]
+
+    ordered: list[tuple[dict, set, float]] = []
+    cur_lat, cur_lng = depot_lat, depot_lng
+
+    remaining = list(with_coords)
+    while remaining:
+        best_idx = min(
+            range(len(remaining)),
+            key=lambda i: _haversine_km(cur_lat, cur_lng, *_container_coords(remaining[i][0])),
+        )
+        chosen = remaining.pop(best_idx)
+        ordered.append(chosen)
+        cur_lat, cur_lng = _container_coords(chosen[0])
+
+    # Containers without coordinates go last, sorted by priority
+    without_coords.sort(key=lambda x: x[2], reverse=True)
+    return ordered + without_coords
 
 
 def _compute_priority(container: dict, open_event_types: set[str]) -> float:
@@ -53,7 +109,10 @@ async def create_route_plan(
 ) -> dict:
     threshold = request.constraints.include_threshold_pct
     forced_types = set(request.constraints.force_include_event_types)
+    max_duration = request.constraints.max_route_duration_min
     plan_date = request.date.isoformat()
+    depot_lat = request.depot.lat
+    depot_lng = request.depot.lng
 
     # Fetch all active containers
     all_containers = await db.containers.find({"status": "ACTIVE"}).to_list(None)
@@ -79,61 +138,92 @@ async def create_route_plan(
             score = _compute_priority(container, open_types)
             candidates.append((container, open_types, score))
 
-    # Sort by priority score descending
+    # Sort by priority score descending for round-robin vehicle assignment
     candidates.sort(key=lambda x: x[2], reverse=True)
 
     n_vehicles = len(request.vehicle_ids)
-    vehicle_stops: dict[str, list[dict]] = {vid: [] for vid in request.vehicle_ids}
+    # Assign candidates to vehicles via round-robin (highest priority first)
+    vehicle_candidates: dict[str, list[tuple[dict, set, float]]] = {
+        vid: [] for vid in request.vehicle_ids
+    }
+    for i, item in enumerate(candidates):
+        vehicle_candidates[request.vehicle_ids[i % n_vehicles]].append(item)
+
     dropped = 0
-
-    for i, (container, open_types, score) in enumerate(candidates):
-        vid = request.vehicle_ids[i % n_vehicles]
-        stop_order = len(vehicle_stops[vid]) + 1
-
-        # Simple ETA: base time 06:00 + (order - 1) * (service_time + travel_time)
-        base = datetime.combine(request.date, datetime.min.time()).replace(hour=6)
-        eta = base + timedelta(minutes=(stop_order - 1) * 23)  # 8 min service + 15 min travel
-
-        reasons = []
-        fused = container.get("latest_state", {}).get("fused_fill_pct") or 0
-        fill_state = container.get("latest_state", {}).get("fill_state")
-        if fill_state:
-            reasons.append(fill_state)
-        for et in open_types & forced_types:
-            reasons.append(et)
-
-        vehicle_stops[vid].append(
-            {
-                "stop_id": _new_stop_id(),
-                "order": stop_order,
-                "container_id": container["_id"],
-                "eta": eta,
-                "service_time_min": 8,
-                "priority_score": round(score, 2),
-                "reason": reasons,
-                "status": RouteStopStatus.PENDING.value,
-                "completed_at": None,
-                "collected_weight_kg": None,
-                "notes": None,
-            }
-        )
-
-    total_stops = sum(len(s) for s in vehicle_stops.values())
-    plan_id = _new_plan_id(plan_date.replace("-", ""))
-    now = datetime.utcnow()
+    base_time = datetime.combine(request.date, datetime.min.time()).replace(hour=6)
 
     routes = []
+    total_stops = 0
+    total_distance_km = 0.0
+    total_duration_min = 0.0
+
     for vid in request.vehicle_ids:
-        stops = vehicle_stops[vid]
-        est_duration = len(stops) * 23
+        # Reorder each vehicle's stops with nearest-neighbor heuristic
+        ordered = _nn_order(depot_lat, depot_lng, vehicle_candidates[vid])
+
+        stops: list[dict] = []
+        cur_lat, cur_lng = depot_lat, depot_lng
+        cumulative_min = 0.0
+        route_distance_km = 0.0
+
+        for container, open_types, score in ordered:
+            coords = _container_coords(container)
+            if coords:
+                travel_km = _haversine_km(cur_lat, cur_lng, *coords)
+                travel_min = (travel_km / _AVG_SPEED_KMH) * 60
+                cur_lat, cur_lng = coords
+            else:
+                travel_km = 0.0
+                travel_min = 15.0  # default when no coords
+
+            stop_duration = travel_min + _SERVICE_MIN
+            if request.constraints.allow_drop_low_priority and (
+                cumulative_min + stop_duration > max_duration
+            ):
+                dropped += 1
+                continue
+
+            cumulative_min += stop_duration
+            route_distance_km += travel_km
+            eta = base_time + timedelta(minutes=cumulative_min - _SERVICE_MIN)
+
+            reasons: list[str] = []
+            fill_state = container.get("latest_state", {}).get("fill_state")
+            if fill_state:
+                reasons.append(fill_state)
+            for et in open_types & forced_types:
+                reasons.append(et)
+
+            stops.append(
+                {
+                    "stop_id": _new_stop_id(),
+                    "order": len(stops) + 1,
+                    "container_id": container["_id"],
+                    "eta": eta,
+                    "service_time_min": _SERVICE_MIN,
+                    "priority_score": round(score, 2),
+                    "reason": reasons,
+                    "status": RouteStopStatus.PENDING.value,
+                    "completed_at": None,
+                    "collected_weight_kg": None,
+                    "notes": None,
+                }
+            )
+
+        total_stops += len(stops)
+        total_distance_km += route_distance_km
+        total_duration_min += cumulative_min
         routes.append(
             {
                 "vehicle_id": vid,
-                "estimated_distance_km": None,
-                "estimated_duration_min": est_duration,
+                "estimated_distance_km": round(route_distance_km, 2),
+                "estimated_duration_min": round(cumulative_min, 1),
                 "stops": stops,
             }
         )
+
+    plan_id = _new_plan_id(plan_date.replace("-", ""))
+    now = datetime.utcnow()
 
     plan_doc = {
         "_id": plan_id,
@@ -144,8 +234,8 @@ async def create_route_plan(
         "summary": {
             "vehicles_used": n_vehicles,
             "stops": total_stops,
-            "estimated_distance_km": None,
-            "estimated_duration_min": sum(r["estimated_duration_min"] for r in routes),
+            "estimated_distance_km": round(total_distance_km, 2),
+            "estimated_duration_min": round(total_duration_min, 1),
             "dropped_low_priority_stops": dropped,
         },
         "routes": routes,
@@ -240,5 +330,19 @@ async def complete_route_stop(
             EventSeverity.INFO,
             "Container serviced — collection confirmed by route stop completion.",
         )
+
+    # Reload plan to check whether all stops are now completed
+    updated_plan = await db.route_plans.find_one({"_id": plan_id})
+    if updated_plan:
+        all_stops_done = all(
+            stop.get("status") in (RouteStopStatus.COMPLETED.value, RouteStopStatus.SKIPPED.value)
+            for route in updated_plan.get("routes", [])
+            for stop in route.get("stops", [])
+        )
+        if all_stops_done:
+            await db.route_plans.update_one(
+                {"_id": plan_id},
+                {"$set": {"status": RoutePlanStatus.COMPLETED.value, "updated_at": now}},
+            )
 
     return {"plan_id": plan_id, "stop_id": stop_id, "status": update.get("status")}
