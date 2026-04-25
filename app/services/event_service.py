@@ -4,6 +4,7 @@ from uuid import uuid4
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 
+from ..core.event_bus import bus
 from ..models.common import CameraState, EventSeverity, EventStatus, EventType
 from ..models.device import DeviceEventRequest
 
@@ -24,25 +25,30 @@ async def create_system_event(
     """Create a backend-generated event (alert rules, offline monitor)."""
     event_id = _new_event_id()
     now = datetime.utcnow()
-    await db.events.insert_one(
-        {
-            "_id": event_id,
-            # Use event_id as message_id so the (device_id, message_id) unique
-            # sparse index never treats two system events as duplicates.
-            "message_id": event_id,
-            "container_id": container_id,
-            "device_id": device_id,
-            "type": event_type.value,
-            "severity": severity.value,
-            "status": EventStatus.OPEN.value,
-            "started_at": now,
-            "ended_at": None,
-            "summary": summary,
-            "state": state or {},
-            "evidence": {"media_ids": []},
-            "created_at": now,
-            "updated_at": now,
-        }
+    doc = {
+        "_id": event_id,
+        # Use event_id as message_id so the (device_id, message_id) unique
+        # sparse index never treats two system events as duplicates.
+        "message_id": event_id,
+        "container_id": container_id,
+        "device_id": device_id,
+        "type": event_type.value,
+        "severity": severity.value,
+        "status": EventStatus.OPEN.value,
+        "started_at": now,
+        "ended_at": None,
+        "summary": summary,
+        "state": state or {},
+        "evidence": {"media_ids": []},
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.events.insert_one(doc)
+    await bus.publish(
+        "alarm.created",
+        {"event_id": event_id, "container_id": container_id, "device_id": device_id,
+         "type": event_type.value, "severity": severity.value, "summary": summary,
+         "started_at": now.isoformat() + "Z"},
     )
     return event_id
 
@@ -93,13 +99,24 @@ async def process_device_event(
         "updated_at": now,
     }
 
+    inserted = True
     try:
         await db.events.insert_one(event_doc)
     except DuplicateKeyError:
+        inserted = False
         existing = await db.events.find_one(
             {"device_id": payload.device_id, "message_id": message_id}
         )
         event_id = existing["_id"] if existing else event_id
+
+    if inserted:
+        await bus.publish(
+            "alarm.created",
+            {"event_id": event_id, "container_id": payload.container_id,
+             "device_id": payload.device_id, "type": payload.event.type,
+             "severity": payload.event.severity, "summary": payload.event.summary,
+             "started_at": payload.event.started_at.isoformat() + "Z"},
+        )
 
     # Side effects by event type
     if payload.event.type == EventType.GARBAGE_DETECTED.value:

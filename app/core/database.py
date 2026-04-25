@@ -74,3 +74,11 @@ async def _setup_indexes(db: AsyncIOMotorDatabase) -> None:
 
     await db.maintenance_tickets.create_index([("container_id", 1)])
     await db.maintenance_tickets.create_index([("status", 1)])
+
+    await db.crews.create_index([("status", 1)])
+    await db.crews.create_index([("assigned_route_plan_id", 1)])
+
+    await db.crew_location_history.create_index([("crew_id", 1), ("recorded_at", -1)])
+    await db.crew_location_history.create_index([("recorded_at", 1)], expireAfterSeconds=2592000)
+
+    await db.route_plans.create_index([("status", 1), ("date", 1)])

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from ..core.database import get_db
+from ..core.event_bus import bus
 from ..core.security import get_current_user, require_roles
 from ..models.event import (
     AcknowledgeRequest,
@@ -130,6 +131,8 @@ async def acknowledge_event(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": "EVENT_NOT_FOUND", "message": "Event not found."}},
             )
+    else:
+        await bus.publish("alarm.updated", {"event_id": event_id, "status": EventStatus.ACKNOWLEDGED.value})
     return EventUpdateResponse(event_id=event_id, status=EventStatus.ACKNOWLEDGED)
 
 
@@ -157,6 +160,8 @@ async def resolve_event(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"error": {"code": "EVENT_NOT_FOUND", "message": "Event not found."}},
             )
+    else:
+        await bus.publish("alarm.updated", {"event_id": event_id, "status": EventStatus.RESOLVED.value})
     return EventUpdateResponse(event_id=event_id, status=EventStatus.RESOLVED)
 
 
@@ -180,4 +185,5 @@ async def ignore_event(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": "EVENT_NOT_FOUND", "message": "Event not found."}},
         )
+    await bus.publish("alarm.updated", {"event_id": event_id, "status": EventStatus.IGNORED.value})
     return EventUpdateResponse(event_id=event_id, status=EventStatus.IGNORED)

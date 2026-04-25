@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from app.main import app\")",
+      "Bash(timeout 8 python -m uvicorn app.main:app --host 127.0.0.1 --port 8765)",
+      "Bash(python -c ' *)",
+      "Bash(timeout 20 python -m uvicorn app.main:app --host 127.0.0.1 --port 8765)",
+      "Bash(python -m uvicorn app.main:app --host 127.0.0.1 --port 8765)",
+      "Bash(curl -s http://127.0.0.1:8765/health)",
+      "Bash(curl -s -X POST http://127.0.0.1:8765/api/v1/auth/login -H \"Content-Type: application/json\" -d \"{\\\\\"email\\\\\":\\\\\"admin@smart-waste.local\\\\\",\\\\\"password\\\\\":\\\\\"admin1234\\\\\"}\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8765/api/v1/auth/login -H \"Content-Type: application/json\" -d '{\"email\":\"admin@smart-waste.local\",\"password\":\"admin1234\"}')",
+      "Bash(python -m py_compile app/main.py app/core/database.py app/core/event_bus.py app/core/rate_limiter.py app/models/common.py app/models/route.py app/models/crew.py app/routers/crews.py app/routers/dashboard.py app/routers/realtime.py app/routers/routes.py app/routers/events.py app/services/route_service.py app/services/event_service.py)"
+    ]
+  }
+}

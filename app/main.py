@@ -7,13 +7,14 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .core.config import settings
 from .core.database import connect_db, disconnect_db, get_db
 from .core.security import hash_password
 from .background.offline_monitor import offline_monitor_loop
-from .routers import auth, containers, device_ingest, devices, events, maintenance, media, routes
+from .routers import auth, containers, crews, dashboard, device_ingest, devices, events, maintenance, media, realtime, routes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,6 +64,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Custom error responses matching spec §17 ──────────────────────────────────
 
 @app.exception_handler(RequestValidationError)
@@ -92,7 +101,10 @@ app.include_router(events.router, prefix=PREFIX)
 app.include_router(media.router, prefix=PREFIX)
 app.include_router(devices.router, prefix=PREFIX)
 app.include_router(routes.router, prefix=PREFIX)
+app.include_router(crews.router, prefix=PREFIX)
 app.include_router(maintenance.router, prefix=PREFIX)
+app.include_router(dashboard.router, prefix=PREFIX)
+app.include_router(realtime.router, prefix=PREFIX)
 
 
 @app.get("/health")

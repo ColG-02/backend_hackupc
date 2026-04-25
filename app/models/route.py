@@ -34,9 +34,14 @@ class RouteStop(BaseModel):
     priority_score: float
     reason: list[str] = []
     status: RouteStopStatus = RouteStopStatus.PENDING
+    arrived_at: datetime | None = None
+    started_at: datetime | None = None
     completed_at: datetime | None = None
+    skipped_at: datetime | None = None
+    skip_reason: str | None = None
     collected_weight_kg: float | None = None
     notes: str | None = None
+    issue_reported: bool = False
 
 
 class VehicleRoute(BaseModel):
@@ -92,9 +97,14 @@ class DispatchResponse(BaseModel):
 
 class UpdateStopRequest(BaseModel):
     status: RouteStopStatus
+    arrived_at: datetime | None = None
+    started_at: datetime | None = None
     completed_at: datetime | None = None
+    skipped_at: datetime | None = None
+    skip_reason: str | None = None
     collected_weight_kg: float | None = None
     notes: str | None = None
+    issue_reported: bool | None = None
 
 
 class UpdateStopResponse(BaseModel):
@@ -102,3 +112,15 @@ class UpdateStopResponse(BaseModel):
     route_plan_id: str
     stop_id: str
     status: RouteStopStatus
+
+
+class AssignRouteRequest(BaseModel):
+    crew_id: str
+    vehicle_id: str | None = None
+
+
+class AssignRouteResponse(BaseModel):
+    route_plan_id: str
+    crew_id: str
+    vehicle_id: str | None = None
+    assigned: bool = True

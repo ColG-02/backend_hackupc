@@ -60,6 +60,16 @@ class UserRole(str, Enum):
     ADMIN = "ADMIN"
     DISPATCHER = "DISPATCHER"
     VIEWER = "VIEWER"
+    CREW = "CREW"
+
+
+class CrewStatus(str, Enum):
+    ON_DUTY = "ON_DUTY"
+    OFF_DUTY = "OFF_DUTY"
+    ON_BREAK = "ON_BREAK"
+    IN_ROUTE = "IN_ROUTE"
+    AT_STOP = "AT_STOP"
+    UNKNOWN = "UNKNOWN"
 
 
 class RoutePlanStatus(str, Enum):
@@ -72,8 +82,11 @@ class RoutePlanStatus(str, Enum):
 
 class RouteStopStatus(str, Enum):
     PENDING = "PENDING"
+    ARRIVED = "ARRIVED"
+    IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     SKIPPED = "SKIPPED"
+    FAILED = "FAILED"
 
 
 class TicketStatus(str, Enum):

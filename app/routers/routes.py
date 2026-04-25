@@ -7,7 +7,10 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from ..core.database import get_db
 from ..core.security import get_current_user, require_roles
 from ..models.common import RoutePlanStatus, RouteStopStatus
+from ..core.event_bus import bus
 from ..models.route import (
+    AssignRouteRequest,
+    AssignRouteResponse,
     CreateRoutePlanRequest,
     DispatchRequest,
     DispatchResponse,
@@ -20,13 +23,15 @@ from ..models.route import (
     VehicleRoute,
     RouteStop,
 )
-from ..services.route_service import complete_route_stop, create_route_plan
+from ..services.route_service import assign_route_to_crew, complete_route_stop, create_route_plan
 
 router = APIRouter(prefix="/routes", tags=["routes"])
 
 DBDep = Annotated[AsyncIOMotorDatabase, Depends(get_db)]
 UserDep = Annotated[dict, Depends(get_current_user)]
 DispatcherDep = Annotated[dict, Depends(require_roles("ADMIN", "DISPATCHER"))]
+# Crew members and dispatchers can both update stop statuses
+StopUpdateDep = Annotated[dict, Depends(require_roles("ADMIN", "DISPATCHER", "CREW"))]
 
 
 def _doc_to_out(doc: dict) -> RoutePlanOut:
@@ -161,10 +166,46 @@ async def dispatch_plan(
                 }
             },
         )
+    await bus.publish(
+        "route.plan.updated",
+        {"route_plan_id": route_plan_id, "status": RoutePlanStatus.DISPATCHED.value,
+         "dispatched_at": now.isoformat() + "Z"},
+    )
     return DispatchResponse(
         route_plan_id=route_plan_id,
         status=RoutePlanStatus.DISPATCHED,
         dispatched_at=now.isoformat() + "Z",
+    )
+
+
+@router.post("/plans/{route_plan_id}/assign", response_model=AssignRouteResponse)
+async def assign_plan(
+    route_plan_id: str,
+    body: AssignRouteRequest,
+    db: DBDep,
+    _user: DispatcherDep,
+):
+    try:
+        result = await assign_route_to_crew(db, route_plan_id, body.crew_id, body.vehicle_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "CREW_NOT_FOUND", "message": str(exc)}},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "INVALID_STATE", "message": str(exc)}},
+        )
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "ROUTE_PLAN_NOT_FOUND", "message": "Route plan not found."}},
+        )
+    return AssignRouteResponse(
+        route_plan_id=route_plan_id,
+        crew_id=body.crew_id,
+        vehicle_id=body.vehicle_id,
     )
 
 
@@ -176,7 +217,7 @@ async def update_stop(
     stop_id: str,
     body: UpdateStopRequest,
     db: DBDep,
-    _user: DispatcherDep,
+    _user: StopUpdateDep,
 ):
     result = await complete_route_stop(
         db,

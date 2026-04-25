@@ -13,13 +13,27 @@ from uuid import uuid4
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from ..models.common import EventStatus, EventType, RoutePlanStatus, RouteStopStatus
+from ..core.event_bus import bus
+from ..models.common import (
+    CrewStatus,
+    EventStatus,
+    EventType,
+    RoutePlanStatus,
+    RouteStopStatus,
+)
 from ..models.route import CreateRoutePlanRequest
 from .event_service import create_system_event
 from ..models.common import EventSeverity
 
 _AVG_SPEED_KMH = 30.0   # average urban truck speed
 _SERVICE_MIN = 8         # minutes spent at each stop
+
+# Stop statuses that count as "done" when checking plan completion
+_TERMINAL_STOP_STATUSES = {
+    RouteStopStatus.COMPLETED.value,
+    RouteStopStatus.SKIPPED.value,
+    RouteStopStatus.FAILED.value,
+}
 
 
 def _new_plan_id(plan_date: str) -> str:
@@ -54,7 +68,7 @@ def _container_coords(container: dict) -> tuple[float, float] | None:
 def _nn_order(
     depot_lat: float,
     depot_lng: float,
-    items: list[tuple[dict, set, float]],  # (container, open_types, score)
+    items: list[tuple[dict, set, float]],
 ) -> list[tuple[dict, set, float]]:
     """
     Nearest-neighbor TSP heuristic starting from depot.
@@ -76,7 +90,6 @@ def _nn_order(
         ordered.append(chosen)
         cur_lat, cur_lng = _container_coords(chosen[0])
 
-    # Containers without coordinates go last, sorted by priority
     without_coords.sort(key=lambda x: x[2], reverse=True)
     return ordered + without_coords
 
@@ -114,10 +127,8 @@ async def create_route_plan(
     depot_lat = request.depot.lat
     depot_lng = request.depot.lng
 
-    # Fetch all active containers
     all_containers = await db.containers.find({"status": "ACTIVE"}).to_list(None)
 
-    # For each container, gather open events to determine inclusion and score
     candidates: list[tuple[dict, set, float]] = []
     for container in all_containers:
         cid = container["_id"]
@@ -129,20 +140,14 @@ async def create_route_plan(
         fused = container.get("latest_state", {}).get("fused_fill_pct") or 0
         tamper = container.get("latest_state", {}).get("tamper_open", False)
 
-        include = (
-            fused >= threshold
-            or bool(open_types & forced_types)
-            or tamper
-        )
+        include = fused >= threshold or bool(open_types & forced_types) or tamper
         if include:
             score = _compute_priority(container, open_types)
             candidates.append((container, open_types, score))
 
-    # Sort by priority score descending for round-robin vehicle assignment
     candidates.sort(key=lambda x: x[2], reverse=True)
 
     n_vehicles = len(request.vehicle_ids)
-    # Assign candidates to vehicles via round-robin (highest priority first)
     vehicle_candidates: dict[str, list[tuple[dict, set, float]]] = {
         vid: [] for vid in request.vehicle_ids
     }
@@ -158,7 +163,6 @@ async def create_route_plan(
     total_duration_min = 0.0
 
     for vid in request.vehicle_ids:
-        # Reorder each vehicle's stops with nearest-neighbor heuristic
         ordered = _nn_order(depot_lat, depot_lng, vehicle_candidates[vid])
 
         stops: list[dict] = []
@@ -174,7 +178,7 @@ async def create_route_plan(
                 cur_lat, cur_lng = coords
             else:
                 travel_km = 0.0
-                travel_min = 15.0  # default when no coords
+                travel_min = 15.0
 
             stop_duration = travel_min + _SERVICE_MIN
             if request.constraints.allow_drop_low_priority and (
@@ -204,9 +208,14 @@ async def create_route_plan(
                     "priority_score": round(score, 2),
                     "reason": reasons,
                     "status": RouteStopStatus.PENDING.value,
+                    "arrived_at": None,
+                    "started_at": None,
                     "completed_at": None,
+                    "skipped_at": None,
+                    "skip_reason": None,
                     "collected_weight_kg": None,
                     "notes": None,
+                    "issue_reported": False,
                 }
             )
 
@@ -231,6 +240,8 @@ async def create_route_plan(
         "status": RoutePlanStatus.PLANNED.value,
         "depot": request.depot.model_dump(),
         "vehicle_ids": request.vehicle_ids,
+        "assigned_crew_id": None,
+        "assigned_vehicle_id": None,
         "summary": {
             "vehicles_used": n_vehicles,
             "stops": total_stops,
@@ -249,6 +260,55 @@ async def create_route_plan(
     return plan_doc
 
 
+async def assign_route_to_crew(
+    db: AsyncIOMotorDatabase,
+    plan_id: str,
+    crew_id: str,
+    vehicle_id: str | None,
+) -> dict | None:
+    """Assign a dispatched plan to a crew and transition plan → IN_PROGRESS."""
+    now = datetime.utcnow()
+
+    plan = await db.route_plans.find_one({"_id": plan_id})
+    if not plan:
+        return None
+
+    if plan.get("status") not in (RoutePlanStatus.PLANNED.value, RoutePlanStatus.DISPATCHED.value):
+        raise ValueError(f"Plan is in state '{plan['status']}' and cannot be assigned.")
+
+    crew = await db.crews.find_one({"_id": crew_id})
+    if not crew:
+        raise KeyError(f"Crew '{crew_id}' not found.")
+
+    crew_updates: dict = {
+        "assigned_route_plan_id": plan_id,
+        "status": CrewStatus.IN_ROUTE.value,
+        "updated_at": now,
+    }
+    if vehicle_id:
+        crew_updates["vehicle_id"] = vehicle_id
+
+    await db.crews.update_one({"_id": crew_id}, {"$set": crew_updates})
+    await db.route_plans.update_one(
+        {"_id": plan_id},
+        {
+            "$set": {
+                "assigned_crew_id": crew_id,
+                "assigned_vehicle_id": vehicle_id,
+                "status": RoutePlanStatus.IN_PROGRESS.value,
+                "updated_at": now,
+            }
+        },
+    )
+
+    await bus.publish(
+        "route.plan.updated",
+        {"route_plan_id": plan_id, "status": RoutePlanStatus.IN_PROGRESS.value,
+         "assigned_crew_id": crew_id, "updated_at": now.isoformat() + "Z"},
+    )
+    return {"plan_id": plan_id, "crew_id": crew_id, "vehicle_id": vehicle_id}
+
+
 async def complete_route_stop(
     db: AsyncIOMotorDatabase,
     plan_id: str,
@@ -256,7 +316,7 @@ async def complete_route_stop(
     update: dict,
     completed_by: str,
 ) -> dict | None:
-    """Mark a stop completed and apply all side effects per spec §13.5."""
+    """Update a stop's status and apply side-effects per the stop's new state."""
     now = datetime.utcnow()
 
     plan = await db.route_plans.find_one({"_id": plan_id})
@@ -271,33 +331,51 @@ async def complete_route_stop(
                 target_stop = stop
                 container_id = stop["container_id"]
                 break
+        if target_stop:
+            break
 
     if not target_stop:
         return None
 
-    # Update the stop in-place
+    new_status = update.get("status", target_stop["status"])
+
+    # Build the field set for the stop document
+    stop_fields: dict = {
+        "routes.$[].stops.$[s].status": new_status,
+        "updated_at": now,
+    }
+    for field in ("arrived_at", "started_at", "completed_at", "skipped_at",
+                  "skip_reason", "collected_weight_kg", "notes", "issue_reported"):
+        val = update.get(field)
+        if val is not None:
+            stop_fields[f"routes.$[].stops.$[s].{field}"] = val
+
     await db.route_plans.update_one(
         {"_id": plan_id, "routes.stops.stop_id": stop_id},
-        {
-            "$set": {
-                "routes.$[].stops.$[s].status": update.get("status", RouteStopStatus.COMPLETED.value),
-                "routes.$[].stops.$[s].completed_at": update.get("completed_at", now),
-                "routes.$[].stops.$[s].collected_weight_kg": update.get("collected_weight_kg"),
-                "routes.$[].stops.$[s].notes": update.get("notes"),
-                "updated_at": now,
-            }
-        },
+        {"$set": stop_fields},
         array_filters=[{"s.stop_id": stop_id}],
     )
 
-    if update.get("status") == RouteStopStatus.COMPLETED.value and container_id:
-        # Update container last_collected_at
+    # Transition plan from DISPATCHED → IN_PROGRESS on first active stop
+    if new_status in (RouteStopStatus.ARRIVED.value, RouteStopStatus.IN_PROGRESS.value):
+        if plan.get("status") == RoutePlanStatus.DISPATCHED.value:
+            await db.route_plans.update_one(
+                {"_id": plan_id},
+                {"$set": {"status": RoutePlanStatus.IN_PROGRESS.value, "updated_at": now}},
+            )
+            await bus.publish(
+                "route.plan.updated",
+                {"route_plan_id": plan_id, "status": RoutePlanStatus.IN_PROGRESS.value,
+                 "updated_at": now.isoformat() + "Z"},
+            )
+
+    # Side-effects on COMPLETED stop
+    if new_status == RouteStopStatus.COMPLETED.value and container_id:
         await db.containers.update_one(
             {"_id": container_id},
             {"$set": {"last_collected_at": now, "updated_at": now}},
         )
 
-        # Resolve open fill/garbage events
         resolve_types = [
             EventType.GARBAGE_DETECTED.value,
             EventType.FULL_THRESHOLD.value,
@@ -309,16 +387,9 @@ async def complete_route_stop(
                 "type": {"$in": resolve_types},
                 "status": EventStatus.OPEN.value,
             },
-            {
-                "$set": {
-                    "status": EventStatus.RESOLVED.value,
-                    "ended_at": now,
-                    "updated_at": now,
-                }
-            },
+            {"$set": {"status": EventStatus.RESOLVED.value, "ended_at": now, "updated_at": now}},
         )
 
-        # Get device_id for the container
         container = await db.containers.find_one({"_id": container_id})
         device_id = container.get("device_id", "") if container else ""
 
@@ -331,18 +402,53 @@ async def complete_route_stop(
             "Container serviced — collection confirmed by route stop completion.",
         )
 
-    # Reload plan to check whether all stops are now completed
+        await bus.publish(
+            "container.latest_state.updated",
+            {"container_id": container_id, "last_collected_at": now.isoformat() + "Z"},
+        )
+
+    # Publish stop update event
+    await bus.publish(
+        "route.stop.updated",
+        {
+            "route_plan_id": plan_id,
+            "stop_id": stop_id,
+            "container_id": container_id,
+            "status": new_status,
+            "updated_at": now.isoformat() + "Z",
+        },
+    )
+
+    # Reload plan and auto-complete if all stops are terminal
     updated_plan = await db.route_plans.find_one({"_id": plan_id})
     if updated_plan:
-        all_stops_done = all(
-            stop.get("status") in (RouteStopStatus.COMPLETED.value, RouteStopStatus.SKIPPED.value)
+        all_done = all(
+            stop.get("status") in _TERMINAL_STOP_STATUSES
             for route in updated_plan.get("routes", [])
             for stop in route.get("stops", [])
         )
-        if all_stops_done:
+        if all_done and updated_plan.get("status") not in (
+            RoutePlanStatus.COMPLETED.value, RoutePlanStatus.CANCELLED.value
+        ):
             await db.route_plans.update_one(
                 {"_id": plan_id},
                 {"$set": {"status": RoutePlanStatus.COMPLETED.value, "updated_at": now}},
             )
+            # Clear crew assignment when plan finishes
+            assigned_crew = updated_plan.get("assigned_crew_id")
+            if assigned_crew:
+                await db.crews.update_one(
+                    {"_id": assigned_crew},
+                    {"$set": {
+                        "status": CrewStatus.ON_DUTY.value,
+                        "assigned_route_plan_id": None,
+                        "updated_at": now,
+                    }},
+                )
+            await bus.publish(
+                "route.plan.updated",
+                {"route_plan_id": plan_id, "status": RoutePlanStatus.COMPLETED.value,
+                 "updated_at": now.isoformat() + "Z"},
+            )
 
-    return {"plan_id": plan_id, "stop_id": stop_id, "status": update.get("status")}
+    return {"plan_id": plan_id, "stop_id": stop_id, "status": new_status}
