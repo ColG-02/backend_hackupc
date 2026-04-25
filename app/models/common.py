@@ -1,0 +1,90 @@
+from enum import Enum
+
+
+class CameraState(str, Enum):
+    EVERYTHING_OK = "EVERYTHING_OK"
+    GARBAGE_DETECTED = "GARBAGE_DETECTED"
+    UNKNOWN = "UNKNOWN"
+    CAMERA_FAULT = "CAMERA_FAULT"
+
+
+class FillState(str, Enum):
+    EMPTY = "EMPTY"
+    NORMAL = "NORMAL"
+    NEAR_FULL = "NEAR_FULL"
+    FULL = "FULL"
+    CRITICAL = "CRITICAL"
+    UNKNOWN = "UNKNOWN"
+
+
+class DeviceStatus(str, Enum):
+    ONLINE = "ONLINE"
+    OFFLINE = "OFFLINE"
+    DEGRADED = "DEGRADED"
+    FAULT = "FAULT"
+    MAINTENANCE = "MAINTENANCE"
+    UNKNOWN = "UNKNOWN"
+    DISABLED = "DISABLED"
+
+
+class EventType(str, Enum):
+    GARBAGE_DETECTED = "GARBAGE_DETECTED"
+    GARBAGE_CLEARED = "GARBAGE_CLEARED"
+    FULL_THRESHOLD = "FULL_THRESHOLD"
+    CRITICAL_FULL = "CRITICAL_FULL"
+    TAMPER_OPEN = "TAMPER_OPEN"
+    TAMPER_CLOSED = "TAMPER_CLOSED"
+    SENSOR_FAULT = "SENSOR_FAULT"
+    CAMERA_FAULT = "CAMERA_FAULT"
+    LOW_POWER = "LOW_POWER"
+    DEVICE_OFFLINE = "DEVICE_OFFLINE"
+    DEVICE_ONLINE = "DEVICE_ONLINE"
+    MAINTENANCE_REQUIRED = "MAINTENANCE_REQUIRED"
+    COLLECTION_CONFIRMED = "COLLECTION_CONFIRMED"
+
+
+class EventSeverity(str, Enum):
+    INFO = "INFO"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
+class EventStatus(str, Enum):
+    OPEN = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED = "RESOLVED"
+    IGNORED = "IGNORED"
+
+
+class UserRole(str, Enum):
+    ADMIN = "ADMIN"
+    DISPATCHER = "DISPATCHER"
+    VIEWER = "VIEWER"
+
+
+class RoutePlanStatus(str, Enum):
+    PLANNED = "PLANNED"
+    DISPATCHED = "DISPATCHED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class RouteStopStatus(str, Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
+
+
+class TicketStatus(str, Enum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+    CANCELLED = "CANCELLED"
+
+
+class TicketPriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
