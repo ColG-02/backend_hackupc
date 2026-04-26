@@ -257,7 +257,7 @@ async def heartbeat(body: HeartbeatRequest, db: DBDep, device: DeviceDep):
                 body.device_id,
                 EventType.DEVICE_ONLINE,
                 EventSeverity.INFO,
-                f"Device {body.device_id} reconnected.",
+                "Container reconnected.",
             )
 
     container = await db.containers.find_one({"_id": body.container_id})

@@ -69,7 +69,7 @@ async def _check_offline_devices(db: AsyncIOMotorDatabase) -> None:
                 device_id,
                 EventType.DEVICE_OFFLINE,
                 EventSeverity.WARNING,
-                f"Device {device_id} has not sent a heartbeat for over {OFFLINE_THRESHOLD_MINUTES} minutes.",
+                f"Container has not sent a heartbeat for over {OFFLINE_THRESHOLD_MINUTES} minutes.",
             )
         logger.warning("Device %s marked OFFLINE.", device_id)
 
@@ -109,6 +109,6 @@ async def _check_offline_devices(db: AsyncIOMotorDatabase) -> None:
                 device_id,
                 EventType.DEVICE_ONLINE,
                 EventSeverity.INFO,
-                f"Device {device_id} reconnected after being offline.",
+                "Container reconnected after being offline.",
             )
         logger.info("Device %s marked ONLINE (reconnected).", device_id)
