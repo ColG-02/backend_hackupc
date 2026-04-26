@@ -14,22 +14,22 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin-change-this")
 # Site used for all simulated containers
 SIM_SITE_ID = "site-sim-demo"
 
-# Belgrade city centre as default depot
-DEPOT_LAT = 44.8176
-DEPOT_LNG = 20.4573
+# Barcelona city centre as depot
+DEPOT_LAT = 41.3851
+DEPOT_LNG = 2.1734
 
-# Simulated container locations (lat/lng pairs)
+# Simulated container locations (lat/lng pairs) — spread across Barcelona
 CONTAINER_LOCATIONS = [
-    (44.8176, 20.4573),
-    (44.8200, 20.4612),
-    (44.8150, 20.4530),
-    (44.8230, 20.4480),
-    (44.8100, 20.4660),
-    (44.8260, 20.4700),
-    (44.8080, 20.4490),
-    (44.8310, 20.4410),
-    (44.8050, 20.4740),
-    (44.8350, 20.4350),
+    (41.3851, 2.1734),   # Eixample centre
+    (41.3879, 2.1699),   # Passeig de Gràcia
+    (41.3808, 2.1761),   # Sant Antoni
+    (41.3902, 2.1540),   # Les Corts
+    (41.3763, 2.1863),   # Barceloneta
+    (41.4032, 2.1743),   # Gràcia
+    (41.3750, 2.1490),   # Sants
+    (41.4105, 2.1524),   # Sarrià
+    (41.3938, 2.1940),   # Poblenou
+    (41.3695, 2.1780),   # Port Olímpic area
 ]
 
 

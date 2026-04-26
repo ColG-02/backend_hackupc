@@ -81,6 +81,7 @@ async def process_device_event(
         }
 
     event_id = _new_event_id()
+    is_resolution = payload.event.type == EventType.GARBAGE_CLEARED.value
     event_doc = {
         "_id": event_id,
         "message_id": message_id,
@@ -88,7 +89,7 @@ async def process_device_event(
         "device_id": payload.device_id,
         "type": payload.event.type,
         "severity": payload.event.severity,
-        "status": EventStatus.OPEN.value,
+        "status": EventStatus.RESOLVED.value if is_resolution else EventStatus.OPEN.value,
         "started_at": payload.event.started_at,
         "ended_at": payload.event.ended_at,
         "confidence": payload.event.confidence,
@@ -109,7 +110,7 @@ async def process_device_event(
         )
         event_id = existing["_id"] if existing else event_id
 
-    if inserted:
+    if inserted and not is_resolution:
         await bus.publish(
             "alarm.created",
             {"event_id": event_id, "container_id": payload.container_id,
@@ -131,7 +132,7 @@ async def process_device_event(
         )
 
     elif payload.event.type == EventType.GARBAGE_CLEARED.value:
-        await db.events.update_many(
+        result = await db.events.update_many(
             {
                 "container_id": payload.container_id,
                 "type": EventType.GARBAGE_DETECTED.value,
@@ -154,6 +155,19 @@ async def process_device_event(
                 }
             },
         )
+        if result.modified_count > 0:
+            await bus.publish(
+                "alarm.updated",
+                {
+                    "container_id": payload.container_id,
+                    "device_id": payload.device_id,
+                    "resolved_type": EventType.GARBAGE_DETECTED.value,
+                    "status": EventStatus.RESOLVED.value,
+                    "resolution_event_id": event_id,
+                    "summary": payload.event.summary,
+                    "resolved_at": now.isoformat() + "Z",
+                },
+            )
 
     elif payload.event.type == EventType.TAMPER_OPEN.value:
         await db.containers.update_one(
